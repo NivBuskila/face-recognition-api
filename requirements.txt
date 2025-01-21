@@ -1,0 +1,7 @@
+Flask # The main Flask library
+Flasgger # If you want to add Swagger documentation
+python-dotenv # If you are using environment variables
+pymongo # If you are using MongoDB
+Flask-Cors # If you are using CORS
+Flask-RESTful # If you are using RESTful APIs
+gunicorn # If you are deploying
