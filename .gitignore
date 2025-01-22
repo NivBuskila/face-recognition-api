@@ -23,3 +23,5 @@ env/
 .DS_Store
 Thumbs.db
 .vercel
+**/npm-cache/
+UsersnivbuAppDataLocalnpm-cache/
