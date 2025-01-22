@@ -225,6 +225,67 @@ def update_user(user_id):
             "error": str(e)
         }), 500
 
+@app.route('/api/users/<user_id>/verify', methods=['POST'])
+def verify_user(user_id):
+    """Verify User
+    ---
+    parameters:
+      - name: user_id
+        in: path
+        type: string
+        required: true
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - faceData
+          properties:
+            faceData:
+              type: string
+              example: base64_encoded_face_data
+    responses:
+      200:
+        description: Verification successful
+      400:
+        description: Missing face data
+      404:
+        description: User not found
+      500:
+        description: Internal server error
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'faceData' not in data:
+            return jsonify({
+                "error": "Missing face data"
+            }), 400
+            
+        user = users_collection.find_one({"userId": user_id})
+        if not user:
+            return jsonify({
+                "error": "User not found"
+            }), 404
+            
+        # Placeholder for face verification logic
+        # In a real-world scenario, you would compare the face data
+        # from the request with the face data stored in the database
+        # and calculate a confidence score
+        # For the sake of simplicity, we are returning a fixed confidence score of 0.95
+        
+        return jsonify({
+            "success": True,
+            "userId": user_id,
+            "confidence": 0.95
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "error": str(e)
+        }), 500
+    
 @app.route('/api/users/<user_id>', methods=['DELETE'])
 def delete_user(user_id):
     """Delete User
