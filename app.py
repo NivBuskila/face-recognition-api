@@ -91,46 +91,76 @@ def health_check():
 
 @app.route('/api/users', methods=['POST'])
 def register_user():
+    """Register New User
+    ---
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - userId
+            - faceData
+          properties:
+            userId:
+              type: string
+            faceData:
+              type: string
+    responses:
+      201:
+        description: User registered successfully
+      400:
+        description: Bad request or face detection failed
+      500:
+        description: Server error
+    """
     try:
-        app.logger.info("Received registration request")
+        app.logger.info("Starting user registration")
         data = request.get_json()
-        app.logger.info(f"Request data: {data.keys()}")
         
-        if not data or 'userId' not in data or 'faceData' not in data:
+        if not data:
+            app.logger.error("No JSON data received")
+            return jsonify({"error": "No data provided"}), 400
+            
+        if 'userId' not in data or 'faceData' not in data:
             app.logger.error("Missing required fields")
-            return jsonify({
-                "error": "Missing required fields"
-            }), 400
+            return jsonify({"error": "Missing userId or faceData"}), 400
             
-        app.logger.info(f"Processing image for user: {data['userId']}")
-        app.logger.info(f"Image data length: {len(data['faceData'])}")
+        app.logger.info(f"Processing registration for user: {data['userId']}")
         
-        # Add padding if needed
-        faceData = data['faceData']
-        padding = len(faceData) % 4
-        if padding:
-            faceData += '=' * (4 - padding)
-            
         try:
-            # Verify face in image
+            # נוסיף padding אם צריך
+            faceData = data['faceData']
+            padding = len(faceData) % 4
+            if padding:
+                faceData += '=' * (4 - padding)
+            
+            app.logger.info("Decoding base64 image")
             image_data = base64.b64decode(faceData)
-            detected_faces = face_client.face.detect_with_stream(io.BytesIO(image_data))
+            
+            app.logger.info("Calling Azure Face API")
+            detected_faces = face_client.face.detect_with_stream(
+                io.BytesIO(image_data),
+                detection_model='detection_01'
+            )
             
             if not detected_faces:
-                return jsonify({
-                    "error": "No face detected in image"
-                }), 400
+                app.logger.error("No face detected in image")
+                return jsonify({"error": "No face detected"}), 400
                 
-            # Store user data
+            app.logger.info(f"Face detected, ID: {detected_faces[0].face_id}")
+            
+            # שמירה במונגו
             new_user = {
                 "userId": data['userId'],
-                "faceData": faceData,  # שמור את הstring המתוקן
+                "faceData": faceData,
                 "faceId": str(detected_faces[0].face_id),
-                "createdAt": datetime.utcnow(),
-                "status": "active"
+                "createdAt": datetime.utcnow()
             }
             
             result = users_collection.insert_one(new_user)
+            app.logger.info(f"User saved to DB with ID: {result.inserted_id}")
             
             return jsonify({
                 "message": "User registered successfully",
@@ -139,14 +169,12 @@ def register_user():
             }), 201
             
         except Exception as e:
-            return jsonify({
-                "error": f"Error processing image: {str(e)}"
-            }), 400
+            app.logger.error(f"Error processing image: {str(e)}")
+            return jsonify({"error": f"Image processing error: {str(e)}"}), 400
             
     except Exception as e:
-        return jsonify({
-            "error": str(e)
-        }), 500
+        app.logger.error(f"Server error: {str(e)}")
+        return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 @app.route('/api/users/<user_id>', methods=['PUT'])
 @token_required
@@ -216,6 +244,31 @@ def update_user(user_id):
         return jsonify({
             "error": str(e)
         }), 500
+
+
+@app.route('/azure-test', methods=['GET'])
+def test_azure_connection():
+    """Test Azure Face API Connection
+    ---
+    responses:
+      200:
+        description: Connection successful
+      500:
+        description: Connection failed
+    """
+    try:
+        # נסה פעולה פשוטה מול Azure
+        face_client.face.list_face_lists()
+        return jsonify({
+            "status": "success",
+            "message": "Azure Face API connection is working"
+        }), 200
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": f"Azure Face API connection failed: {str(e)}"
+        }), 500
+    
 
 @app.route('/api/users/<user_id>', methods=['DELETE'])
 @token_required
