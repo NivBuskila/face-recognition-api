@@ -5,3 +5,8 @@ pymongo # If you are using MongoDB
 Flask-Cors # If you are using CORS
 Flask-RESTful # If you are using RESTful APIs
 gunicorn # If you are deploying
+deepface
+tensorflow
+opencv-python
+Pillow
+numpy

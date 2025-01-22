@@ -5,6 +5,12 @@ from dotenv import load_dotenv
 from datetime import datetime
 import os
 from flasgger import Swagger
+from deepface import DeepFace
+import numpy as np
+import base64
+from io import BytesIO
+from PIL import Image
+import cv2
 
 # Load environment variables
 load_dotenv()
