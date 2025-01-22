@@ -5,12 +5,11 @@ from dotenv import load_dotenv
 from datetime import datetime
 import os
 from flasgger import Swagger
-from deepface import DeepFace
+import cv2
 import numpy as np
 import base64
 from io import BytesIO
 from PIL import Image
-import cv2
 
 # Load environment variables
 load_dotenv()
@@ -233,34 +232,6 @@ def update_user(user_id):
 
 @app.route('/api/users/<user_id>/verify', methods=['POST'])
 def verify_user(user_id):
-    """Verify User
-    ---
-    parameters:
-      - name: user_id
-        in: path
-        type: string
-        required: true
-      - in: body
-        name: body
-        required: true
-        schema:
-          type: object
-          required:
-            - faceData
-          properties:
-            faceData:
-              type: string
-              example: base64_encoded_face_data
-    responses:
-      200:
-        description: Verification successful
-      400:
-        description: Missing face data
-      404:
-        description: User not found
-      500:
-        description: Internal server error
-    """
     try:
         data = request.get_json()
         
@@ -275,22 +246,78 @@ def verify_user(user_id):
                 "error": "User not found"
             }), 404
             
-        # Placeholder for face verification logic
-        # In a real-world scenario, you would compare the face data
-        # from the request with the face data stored in the database
-        # and calculate a confidence score
-        # For the sake of simplicity, we are returning a fixed confidence score of 0.95
+        # Convert base64 images to OpenCV format
+        stored_image = base64_to_image(user['faceData'])
+        input_image = base64_to_image(data['faceData'])
+        
+        # Load face detection model
+        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        
+        # Detect faces in both images
+        stored_faces = detect_faces(stored_image, face_cascade)
+        input_faces = detect_faces(input_image, face_cascade)
+        
+        if not stored_faces or not input_faces:
+            return jsonify({
+                "error": "No face detected in one or both images"
+            }), 400
+        
+        # Compare faces using Histogram Comparison
+        confidence = compare_faces(stored_faces[0], input_faces[0])
+        success = confidence > 0.6
         
         return jsonify({
-            "success": True,
+            "success": success,
             "userId": user_id,
-            "confidence": 0.95
+            "confidence": float(confidence)
         }), 200
         
     except Exception as e:
         return jsonify({
             "error": str(e)
         }), 500
+
+def base64_to_image(base64_string):
+    if 'base64,' in base64_string:
+        base64_string = base64_string.split('base64,')[1]
+    
+    image_data = base64.b64decode(base64_string)
+    image = Image.open(BytesIO(image_data))
+    
+    # Convert to OpenCV format
+    return cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+
+def detect_faces(image, face_cascade):
+    # Convert to grayscale
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+    # Detect faces
+    faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+    
+    # Crop face regions
+    face_images = []
+    for (x, y, w, h) in faces:
+        face = image[y:y+h, x:x+w]
+        face_images.append(cv2.resize(face, (100, 100)))  # Normalize size
+    
+    return face_images
+
+def compare_faces(face1, face2):
+    # Convert to grayscale
+    gray1 = cv2.cvtColor(face1, cv2.COLOR_BGR2GRAY)
+    gray2 = cv2.cvtColor(face2, cv2.COLOR_BGR2GRAY)
+    
+    # Compute histograms
+    hist1 = cv2.calcHist([gray1], [0], None, [256], [0, 256])
+    hist2 = cv2.calcHist([gray2], [0], None, [256], [0, 256])
+    
+    # Normalize histograms
+    cv2.normalize(hist1, hist1)
+    cv2.normalize(hist2, hist2)
+    
+    # Compare histograms
+    return float(cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL) + 1) / 2
+
     
 @app.route('/api/users/<user_id>', methods=['DELETE'])
 def delete_user(user_id):
