@@ -316,24 +316,55 @@ def login():
 def compare_faces_endpoint():
     """Compare two face images
     ---
+    tags:
+      - Face Recognition
+    summary: Compare two facial images and determine if they match
+    description: Upload two base64 encoded images and receive a comparison result with confidence score
+    consumes:
+      - application/json
     parameters:
       - in: body
         name: body
         required: true
         schema:
           type: object
+          required:
+            - faceData1
+            - faceData2
           properties:
             faceData1:
               type: string
-              description: Base64 encoded image 1
+              description: Base64 encoded string of first facial image
             faceData2:
               type: string
-              description: Base64 encoded image 2
+              description: Base64 encoded string of second facial image
     responses:
       200:
-        description: Comparison result
+        description: Face comparison completed successfully
+        schema:
+          type: object
+          properties:
+            verified:
+              type: boolean
+              description: Whether the faces match
+            confidence:
+              type: number
+              format: float
+              description: Confidence score of the match (0-1)
       400:
-        description: Bad request
+        description: Invalid request or face processing failed
+        schema:
+          type: object
+          properties:
+            error:
+              type: string
+      500:
+        description: Internal server error
+        schema:
+          type: object
+          properties:
+            error:
+              type: string
     """
     try:
         data = request.get_json()
