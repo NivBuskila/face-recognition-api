@@ -1,80 +1,197 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from pymongo import MongoClient
-from dotenv import load_dotenv
-from datetime import datetime
+import cv2
+import numpy as np
+from PIL import Image
+import io
+import base64
+import logging
+from datetime import datetime, timedelta
 import os
+from dotenv import load_dotenv
 from flasgger import Swagger
 import jwt
 from functools import wraps
-from azure.cognitiveservices.vision.face import FaceClient
-from msrest.authentication import CognitiveServicesCredentials
-import base64
-import io
+from werkzeug.security import generate_password_hash, check_password_hash
 
 # Load environment variables
 load_dotenv()
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app)
 
-# Add JWT Secret Key
+# Configure CORS
+CORS(app, resources={
+    r"/api/*": {
+        "origins": "*",
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"]
+    }
+})
+
+# JWT Configuration
 app.config['SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'your-secret-key-here')
 
-# Azure Face Client
-face_client = FaceClient(
-    os.getenv('AZURE_ENDPOINT'),
-    CognitiveServicesCredentials(os.getenv('AZURE_KEY'))
-)
+# Swagger template configuration
+swagger_template = {
+    "swagger": "2.0",
+    "info": {
+        "title": "Face Recognition API",
+        "description": "API for face recognition services",
+        "version": "1.0.0"
+    },
+    "consumes": ["application/json"],
+    "produces": ["application/json"],
+    "securityDefinitions": {
+        "Bearer": {
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header",
+            "description": "JWT Authorization header using the Bearer scheme. Example: \"Bearer {token}\""
+        }
+    }
+}
 
-# Swagger configuration
 swagger_config = {
     "headers": [],
-    "specs": [
-        {
-            "endpoint": 'apispec',
-            "route": '/apispec.json',
-            "rule_filter": lambda rule: True,
-            "model_filter": lambda tag: True,
-        }
-    ],
+    "specs": [{
+        "endpoint": 'apispec',
+        "route": '/apispec.json',
+        "rule_filter": lambda rule: True,
+        "model_filter": lambda tag: True,
+    }],
     "static_url_path": "/flasgger_static",
     "swagger_ui": True,
     "specs_route": "/docs"
 }
 
-swagger = Swagger(app, config=swagger_config)
+swagger = Swagger(app, template=swagger_template, config=swagger_config)
 
-# MongoDB connection
-MONGO_URI = os.getenv('MONGO_URI')
-client = MongoClient(MONGO_URI)
-db = client['face_recognition_db']
-users_collection = db['users']
+# MongoDB connection with error handling
+def get_db():
+    try:
+        client = MongoClient(os.getenv('MONGO_URI'), 
+                           serverSelectionTimeoutMS=5000,
+                           connectTimeoutMS=5000,
+                           socketTimeoutMS=5000)
+        db = client['face_recognition_db']
+        client.admin.command('ping')
+        logger.info("Successfully connected to MongoDB")
+        return db
+    except Exception as e:
+        logger.error(f"Failed to connect to MongoDB: {str(e)}")
+        raise
+
+# Initialize database collections
+try:
+    db = get_db()
+    users_collection = db['users']
+    admins_collection = db['admins']
+except Exception as e:
+    logger.error(f"Database initialization failed: {str(e)}")
 
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         token = None
         
-        if 'Authorization' in request.headers:
-            token = request.headers['Authorization'].split(" ")[1]
-            
+        auth_header = request.headers.get('Authorization')
+        if auth_header:
+            try:
+                token = auth_header.split(" ")[1]
+            except IndexError:
+                return jsonify({'error': 'Invalid Authorization header format'}), 401
+        
         if not token:
-            return jsonify({
-                'error': 'Authentication token is missing'
-            }), 401
+            return jsonify({'error': 'Token is missing'}), 401
             
         try:
             data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
-        except:
-            return jsonify({
-                'error': 'Invalid token'
-            }), 401
+            current_user = admins_collection.find_one({'username': data['username']})
+            if not current_user:
+                raise jwt.InvalidTokenError
+        except jwt.ExpiredSignatureError:
+            return jsonify({'error': 'Token has expired'}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({'error': 'Invalid token'}), 401
             
         return f(*args, **kwargs)
     
     return decorated
+
+def process_face_image(image_data):
+    """Process and extract features from face image using OpenCV"""
+    try:
+        # Remove data:image/jpeg;base64, if present
+        if ',' in image_data:
+            image_data = image_data.split(',')[1]
+            
+        # Convert base64 to image
+        image_bytes = base64.b64decode(image_data)
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+        if image is None:
+            return None, "Failed to decode image"
+            
+        # Load face cascade classifier
+        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        
+        # Convert to grayscale
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        
+        # Detect faces
+        faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+        
+        if len(faces) == 0:
+            return None, "No face detected in the image"
+            
+        if len(faces) > 1:
+            return None, "Multiple faces detected in the image"
+            
+        # Extract the face region
+        x, y, w, h = faces[0]
+        face = image[y:y+h, x:x+w]
+        
+        # Resize to standard size
+        face = cv2.resize(face, (128, 128))
+        
+        # Convert to grayscale and flatten
+        face_gray = cv2.cvtColor(face, cv2.COLOR_BGR2GRAY)
+        features = face_gray.flatten().tolist()
+        
+        return features, None
+        
+    except Exception as e:
+        logger.error(f"Error processing image: {str(e)}")
+        return None, str(e)
+
+def compare_faces(face1_features, face2_features, threshold=0.8):
+    """Compare two face features using correlation coefficient"""
+    try:
+        face1 = np.array(face1_features)
+        face2 = np.array(face2_features)
+        
+        # Calculate correlation coefficient
+        correlation = np.corrcoef(face1, face2)[0,1]
+        similarity = (correlation + 1) / 2  # Convert from [-1,1] to [0,1] range
+        
+        return {
+            "matched": similarity >= threshold,
+            "similarity": float(similarity)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error comparing faces: {str(e)}")
+        return {
+            "matched": False,
+            "similarity": 0.0
+        }
 
 @app.route('/health', methods=['GET'])
 def health_check():
@@ -83,15 +200,26 @@ def health_check():
     responses:
       200:
         description: Service is healthy
+      500:
+        description: Service is unhealthy
     """
-    return jsonify({
-        "status": "healthy",
-        "message": "Service is running"
-    }), 200
+    try:
+        db.command('ping')
+        return jsonify({
+            "status": "healthy",
+            "message": "Service is running",
+            "database": "connected"
+        }), 200
+    except Exception as e:
+        return jsonify({
+            "status": "unhealthy",
+            "message": str(e),
+            "database": "disconnected"
+        }), 500
 
-@app.route('/api/users', methods=['POST'])
-def register_user():
-    """Register New User
+@app.route('/api/auth/register', methods=['POST'])
+def register_admin():
+    """Register new admin
     ---
     parameters:
       - in: body
@@ -99,87 +227,201 @@ def register_user():
         required: true
         schema:
           type: object
-          required:
-            - userId
-            - faceData
+          properties:
+            username:
+              type: string
+              example: admin
+            password:
+              type: string
+              example: admin123
+    responses:
+      201:
+        description: Admin registered successfully
+      400:
+        description: Bad request
+      409:
+        description: Admin already exists
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'username' not in data or 'password' not in data:
+            return jsonify({'error': 'Missing required fields'}), 400
+            
+        if admins_collection.find_one({'username': data['username']}):
+            return jsonify({'error': 'Admin already exists'}), 409
+            
+        hashed_password = generate_password_hash(data['password'])
+        
+        new_admin = {
+            'username': data['username'],
+            'password': hashed_password,
+            'created_at': datetime.utcnow()
+        }
+        
+        admins_collection.insert_one(new_admin)
+        
+        return jsonify({'message': 'Admin registered successfully'}), 201
+        
+    except Exception as e:
+        logger.error(f"Error in register_admin: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/auth/login', methods=['POST'])
+def login():
+    """Admin login
+    ---
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          properties:
+            username:
+              type: string
+              example: admin
+            password:
+              type: string
+              example: admin123
+    responses:
+      200:
+        description: Login successful
+      401:
+        description: Invalid credentials
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'username' not in data or 'password' not in data:
+            return jsonify({'error': 'Missing credentials'}), 401
+            
+        admin = admins_collection.find_one({'username': data['username']})
+        
+        if not admin or not check_password_hash(admin['password'], data['password']):
+            return jsonify({'error': 'Invalid credentials'}), 401
+            
+        token = jwt.encode({
+            'username': data['username'],
+            'exp': datetime.utcnow() + timedelta(days=1)
+        }, app.config['SECRET_KEY'])
+        
+        return jsonify({'token': token}), 200
+        
+    except Exception as e:
+        logger.error(f"Error in login: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/faces/compare', methods=['POST'])
+def compare_faces_endpoint():
+    """Compare two face images
+    ---
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          properties:
+            faceData1:
+              type: string
+              description: Base64 encoded image 1
+            faceData2:
+              type: string
+              description: Base64 encoded image 2
+    responses:
+      200:
+        description: Comparison result
+      400:
+        description: Bad request
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'faceData1' not in data or 'faceData2' not in data:
+            return jsonify({'error': 'Missing face data'}), 400
+            
+        features1, error1 = process_face_image(data['faceData1'])
+        if error1:
+            return jsonify({'error': f'Error processing first image: {error1}'}), 400
+            
+        features2, error2 = process_face_image(data['faceData2'])
+        if error2:
+            return jsonify({'error': f'Error processing second image: {error2}'}), 400
+        
+        result = compare_faces(features1, features2)
+        
+        return jsonify({
+            'verified': result['matched'],
+            'confidence': result['similarity']
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error in compare_faces: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/users', methods=['POST'])
+def register_user():
+    """Register new user with face data
+    ---
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
           properties:
             userId:
               type: string
+              example: user123
             faceData:
               type: string
+              description: Base64 encoded image
     responses:
       201:
         description: User registered successfully
       400:
-        description: Bad request or face detection failed
-      500:
-        description: Server error
+        description: Bad request
+      409:
+        description: User already exists
     """
     try:
-        app.logger.info("Starting user registration")
         data = request.get_json()
         
-        if not data:
-            app.logger.error("No JSON data received")
-            return jsonify({"error": "No data provided"}), 400
+        if not data or 'userId' not in data or 'faceData' not in data:
+            return jsonify({'error': 'Missing required fields'}), 400
             
-        if 'userId' not in data or 'faceData' not in data:
-            app.logger.error("Missing required fields")
-            return jsonify({"error": "Missing userId or faceData"}), 400
+        if users_collection.find_one({'userId': data['userId']}):
+            return jsonify({'error': 'User already exists'}), 409
             
-        app.logger.info(f"Processing registration for user: {data['userId']}")
+        features, error = process_face_image(data['faceData'])
         
-        try:
-            # נוסיף padding אם צריך
-            faceData = data['faceData']
-            padding = len(faceData) % 4
-            if padding:
-                faceData += '=' * (4 - padding)
+        if error:
+            return jsonify({'error': f'Face processing failed: {error}'}), 400
             
-            app.logger.info("Decoding base64 image")
-            image_data = base64.b64decode(faceData)
-            
-            app.logger.info("Calling Azure Face API")
-            detected_faces = face_client.face.detect_with_stream(
-                io.BytesIO(image_data),
-                detection_model='detection_01'
-            )
-            
-            if not detected_faces:
-                app.logger.error("No face detected in image")
-                return jsonify({"error": "No face detected"}), 400
-                
-            app.logger.info(f"Face detected, ID: {detected_faces[0].face_id}")
-            
-            # שמירה במונגו
-            new_user = {
-                "userId": data['userId'],
-                "faceData": faceData,
-                "faceId": str(detected_faces[0].face_id),
-                "createdAt": datetime.utcnow()
-            }
-            
-            result = users_collection.insert_one(new_user)
-            app.logger.info(f"User saved to DB with ID: {result.inserted_id}")
-            
-            return jsonify({
-                "message": "User registered successfully",
-                "userId": data['userId'],
-                "_id": str(result.inserted_id)
-            }), 201
-            
-        except Exception as e:
-            app.logger.error(f"Error processing image: {str(e)}")
-            return jsonify({"error": f"Image processing error: {str(e)}"}), 400
-            
+        new_user = {
+            'userId': data['userId'],
+            'faceData': data['faceData'],
+            'faceFeatures': features,
+            'created_at': datetime.utcnow()
+        }
+        
+        result = users_collection.insert_one(new_user)
+        
+        return jsonify({
+            'message': 'User registered successfully',
+            'userId': data['userId'],
+            '_id': str(result.inserted_id)
+        }), 201
+        
     except Exception as e:
-        app.logger.error(f"Server error: {str(e)}")
-        return jsonify({"error": f"Server error: {str(e)}"}), 500
+        logger.error(f"Error in register_user: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
-@app.route('/api/users/<user_id>', methods=['PUT'])
-@token_required
-def update_user(user_id):
-    """Update User
+
+@app.route('/api/users/<user_id>/verify', methods=['POST'])
+def verify_user(user_id):
+    """Verify user's face
     ---
     parameters:
       - name: user_id
@@ -191,14 +433,13 @@ def update_user(user_id):
         required: true
         schema:
           type: object
-          required:
-            - faceData
           properties:
             faceData:
               type: string
+              description: Base64 encoded image
     responses:
       200:
-        description: User updated successfully
+        description: Verification result
       404:
         description: User not found
     """
@@ -206,75 +447,36 @@ def update_user(user_id):
         data = request.get_json()
         
         if not data or 'faceData' not in data:
-            return jsonify({
-                "error": "Missing face data"
-            }), 400
+            return jsonify({'error': 'Missing face data'}), 400
             
-        # Verify face in new image
-        image_data = base64.b64decode(data['faceData'])
-        detected_faces = face_client.face.detect_with_stream(io.BytesIO(image_data))
+        user = users_collection.find_one({'userId': user_id})
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+            
+        input_features, error = process_face_image(data['faceData'])
         
-        if not detected_faces:
-            return jsonify({
-                "error": "No face detected in image"
-            }), 400
+        if error:
+            return jsonify({'error': f'Face processing failed: {error}'}), 400
             
-        result = users_collection.update_one(
-            {"userId": user_id},
-            {
-                "$set": {
-                    "faceData": data['faceData'],
-                    "faceId": str(detected_faces[0].face_id),
-                    "updatedAt": datetime.utcnow()
-                }
-            }
-        )
+        result = compare_faces(input_features, user['faceFeatures'])
         
-        if result.matched_count == 0:
-            return jsonify({
-                "error": "User not found"
-            }), 404
-            
         return jsonify({
-            "message": "User updated successfully",
-            "userId": user_id
+            'verified': result['matched'],
+            'confidence': result['similarity'],
+            'userId': user_id
         }), 200
         
     except Exception as e:
-        return jsonify({
-            "error": str(e)
-        }), 500
-
-
-@app.route('/azure-test', methods=['GET'])
-def test_azure_connection():
-    """Test Azure Face API Connection
-    ---
-    responses:
-      200:
-        description: Connection successful
-      500:
-        description: Connection failed
-    """
-    try:
-        # נסה פעולה פשוטה מול Azure
-        face_client.face.list_face_lists()
-        return jsonify({
-            "status": "success",
-            "message": "Azure Face API connection is working"
-        }), 200
-    except Exception as e:
-        return jsonify({
-            "status": "error",
-            "message": f"Azure Face API connection failed: {str(e)}"
-        }), 500
-    
+        logger.error(f"Error in verify_user: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/users/<user_id>', methods=['DELETE'])
 @token_required
 def delete_user(user_id):
-    """Delete User
+    """Delete user
     ---
+    security:
+      - Bearer: []
     parameters:
       - name: user_id
         in: path
@@ -287,197 +489,27 @@ def delete_user(user_id):
         description: User not found
     """
     try:
-        result = users_collection.delete_one({"userId": user_id})
+        result = users_collection.delete_one({'userId': user_id})
         
         if result.deleted_count == 0:
-            return jsonify({
-                "error": "User not found"
-            }), 404
+            return jsonify({'error': 'User not found'}), 404
             
         return jsonify({
-            "message": "User deleted successfully",
-            "userId": user_id
+            'message': 'User deleted successfully',
+            'userId': user_id
         }), 200
         
     except Exception as e:
-        return jsonify({
-            "error": str(e)
-        }), 500
+        logger.error(f"Error in delete_user: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
-@app.route('/api/users/<user_id>/verify', methods=['POST'])
-def verify_user(user_id):
-    """Verify User
-    ---
-    parameters:
-      - name: user_id
-        in: path
-        type: string
-        required: true
-      - in: body
-        name: body
-        required: true
-        schema:
-          type: object
-          required:
-            - faceData
-          properties:
-            faceData:
-              type: string
-    responses:
-      200:
-        description: Verification successful
-      404:
-        description: User not found
-    """
-    try:
-        data = request.get_json()
-        
-        if not data or 'faceData' not in data:
-            return jsonify({
-                "error": "Missing face data"
-            }), 400
-            
-        user = users_collection.find_one({"userId": user_id})
-        if not user:
-            return jsonify({
-                "error": "User not found"
-            }), 404
-            
-        # Detect faces in both images
-        stored_image = base64.b64decode(user['faceData'])
-        input_image = base64.b64decode(data['faceData'])
-        
-        stored_faces = face_client.face.detect_with_stream(io.BytesIO(stored_image))
-        input_faces = face_client.face.detect_with_stream(io.BytesIO(input_image))
-        
-        if not stored_faces or not input_faces:
-            return jsonify({
-                "error": "No face detected in one or both images"
-            }), 400
-        
-        # Compare faces
-        verify_result = face_client.face.verify_face_to_face(
-            stored_faces[0].face_id,
-            input_faces[0].face_id
-        )
-        
-        return jsonify({
-            "success": verify_result.is_identical,
-            "userId": user_id,
-            "confidence": verify_result.confidence
-        }), 200
-        
-    except Exception as e:
-        return jsonify({
-            "error": str(e)
-        }), 500
-
-@app.route('/api/faces/compare', methods=['POST'])
-def compare_faces():
-    """Compare two face images
-    ---
-    parameters:
-      - in: body
-        name: body
-        required: true
-        schema:
-          type: object
-          required:
-            - faceData1
-            - faceData2
-          properties:
-            faceData1:
-              type: string
-            faceData2:
-              type: string
-    responses:
-      200:
-        description: Comparison successful
-      400:
-        description: Invalid input
-    """
-    try:
-        data = request.get_json()
-        
-        if not data or 'faceData1' not in data or 'faceData2' not in data:
-            return jsonify({
-                "error": "Missing face data"
-            }), 400
-            
-        # Decode both images
-        image1_data = base64.b64decode(data['faceData1'])
-        image2_data = base64.b64decode(data['faceData2'])
-        
-        # Detect faces in both images
-        faces1 = face_client.face.detect_with_stream(io.BytesIO(image1_data))
-        faces2 = face_client.face.detect_with_stream(io.BytesIO(image2_data))
-        
-        if not faces1 or not faces2:
-            return jsonify({
-                "error": "No face detected in one or both images"
-            }), 400
-        
-        # Compare faces
-        verify_result = face_client.face.verify_face_to_face(
-            faces1[0].face_id,
-            faces2[0].face_id
-        )
-        
-        return jsonify({
-            "success": verify_result.is_identical,
-            "confidence": verify_result.confidence
-        }), 200
-        
-    except Exception as e:
-        return jsonify({
-            "error": str(e)
-        }), 500
-    
-@app.route('/api/auth/login', methods=['POST'])
-def login():
-    """Login to get JWT token
-    ---
-    parameters:
-      - in: body
-        name: body
-        required: true
-        schema:
-          type: object
-          required:
-            - username
-            - password
-          properties:
-            username:
-              type: string
-            password:
-              type: string
-    responses:
-      200:
-        description: Login successful
-      401:
-        description: Invalid credentials
-    """
-    auth = request.json
-    
-    if not auth or not auth.get('username') or not auth.get('password'):
-        return jsonify({
-            'error': 'Missing credentials'
-        }), 401
-    
-    if auth.get('username') != 'admin' or auth.get('password') != 'admin':
-        return jsonify({
-            'error': 'Invalid credentials'
-        }), 401
-    
-    token = jwt.encode({
-        'user': auth.get('username'),
-        'exp': datetime.utcnow().timestamp() + 24 * 60 * 60  # 24 hours
-    }, app.config['SECRET_KEY'], algorithm="HS256")
-    
-    return jsonify({
-        'token': token
-    }), 200
+@app.after_request
+def after_request(response):
+    """Enable CORS headers"""
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    return response
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    app.run(host='0.0.0.0', port=port)

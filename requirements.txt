@@ -3,7 +3,8 @@ flask-cors
 pymongo
 python-dotenv
 flasgger
-azure-cognitiveservices-vision-face
-msrest
-PyJWT
 gunicorn
+numpy
+Pillow
+PyJWT
+opencv-python-headless
