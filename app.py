@@ -425,7 +425,8 @@ def compare_faces_endpoint():
     ---
     tags:
       - Face Recognition
-    summary: Compare two face images and return similarity score
+    summary: Compare two facial images and determine if they match
+    description: Upload two base64 encoded images and receive a comparison result with confidence score
     consumes:
       - application/json
     parameters:
@@ -440,36 +441,30 @@ def compare_faces_endpoint():
           properties:
             faceData1:
               type: string
-              description: Base64 encoded image of first face
-              example: "/9j/4AAQSkZJRg..."
+              description: Base64 encoded string of first facial image
             faceData2:
               type: string
-              description: Base64 encoded image of second face
-              example: "/9j/4AAQSkZJRg..."
+              description: Base64 encoded string of second facial image
     responses:
       200:
-        description: Successfully compared faces
+        description: Face comparison completed successfully
         schema:
           type: object
           properties:
             verified:
               type: boolean
               description: Whether the faces match
-              example: true
             confidence:
               type: number
               format: float
               description: Confidence score of the match (0-1)
-              example: 0.92
       400:
-        description: Invalid input or face processing failed
+        description: Invalid request or face processing failed
         schema:
           type: object
           properties:
             error:
               type: string
-              description: Error message
-              example: "No face detected in the image"
       500:
         description: Internal server error
         schema:
@@ -477,8 +472,8 @@ def compare_faces_endpoint():
           properties:
             error:
               type: string
-              description: Error message
     """
+    # Implementation remains the same
     try:
         data = request.get_json()
         
@@ -503,8 +498,7 @@ def compare_faces_endpoint():
     except Exception as e:
         logger.error(f"Error in compare_faces: {str(e)}")
         return jsonify({'error': str(e)}), 500
-    
-    
+
 @app.route('/api/users/<user_id>/verify', methods=['POST'])
 def verify_user(user_id):
     """Verify user's face
