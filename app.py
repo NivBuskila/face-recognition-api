@@ -419,6 +419,92 @@ def register_user():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/faces/compare', methods=['POST'])
+def compare_faces_endpoint():
+    """Compare two face images
+    ---
+    tags:
+      - Face Recognition
+    summary: Compare two face images and return similarity score
+    consumes:
+      - application/json
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - faceData1
+            - faceData2
+          properties:
+            faceData1:
+              type: string
+              description: Base64 encoded image of first face
+              example: "/9j/4AAQSkZJRg..."
+            faceData2:
+              type: string
+              description: Base64 encoded image of second face
+              example: "/9j/4AAQSkZJRg..."
+    responses:
+      200:
+        description: Successfully compared faces
+        schema:
+          type: object
+          properties:
+            verified:
+              type: boolean
+              description: Whether the faces match
+              example: true
+            confidence:
+              type: number
+              format: float
+              description: Confidence score of the match (0-1)
+              example: 0.92
+      400:
+        description: Invalid input or face processing failed
+        schema:
+          type: object
+          properties:
+            error:
+              type: string
+              description: Error message
+              example: "No face detected in the image"
+      500:
+        description: Internal server error
+        schema:
+          type: object
+          properties:
+            error:
+              type: string
+              description: Error message
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'faceData1' not in data or 'faceData2' not in data:
+            return jsonify({'error': 'Missing face data'}), 400
+            
+        features1, error1 = process_face_image(data['faceData1'])
+        if error1:
+            return jsonify({'error': f'Error processing first image: {error1}'}), 400
+            
+        features2, error2 = process_face_image(data['faceData2'])
+        if error2:
+            return jsonify({'error': f'Error processing second image: {error2}'}), 400
+        
+        result = compare_faces(features1, features2)
+        
+        return jsonify({
+            'verified': result['matched'],
+            'confidence': result['similarity']
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error in compare_faces: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+    
+    
 @app.route('/api/users/<user_id>/verify', methods=['POST'])
 def verify_user(user_id):
     """Verify user's face
@@ -469,6 +555,8 @@ def verify_user(user_id):
     except Exception as e:
         logger.error(f"Error in verify_user: {str(e)}")
         return jsonify({'error': str(e)}), 500
+    
+    
 
 @app.route('/api/users/<user_id>', methods=['DELETE'])
 @token_required
