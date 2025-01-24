@@ -13,15 +13,13 @@ from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
 from botocore.exceptions import ClientError
 
-# Load environment variables
+# Initialize Flask and load environment variables
 load_dotenv()
+app = Flask(__name__)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Initialize Flask app
-app = Flask(__name__)
 
 # Configure CORS
 CORS(app, resources={
@@ -35,28 +33,6 @@ CORS(app, resources={
 # JWT Configuration
 app.config['SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'your-secret-key-here')
 
-# Swagger configuration
-swagger_template = {
-    "swagger": "2.0",
-    "info": {
-        "title": "Face Recognition API",
-        "description": "API for face recognition services using AWS Rekognition",
-        "version": "1.0.0"
-    },
-    "consumes": ["application/json"],
-    "produces": ["application/json"],
-    "securityDefinitions": {
-        "Bearer": {
-            "type": "apiKey",
-            "name": "Authorization",
-            "in": "header",
-            "description": "JWT Authorization header using Bearer scheme"
-        }
-    }
-}
-
-swagger = Swagger(app, template=swagger_template)
-
 # Initialize AWS Rekognition client
 rekognition_client = boto3.client('rekognition',
     region_name=os.getenv('AWS_REGION')
@@ -64,6 +40,7 @@ rekognition_client = boto3.client('rekognition',
 
 # MongoDB connection
 def get_db():
+    """Initialize MongoDB connection"""
     try:
         client = MongoClient(os.getenv('MONGO_URI'), 
                            serverSelectionTimeoutMS=5000,
@@ -149,27 +126,10 @@ def compare_faces_aws(source_image: str, target_image: str) -> dict:
         logger.error(f"Error in compare_faces: {str(e)}")
         raise
 
-@app.route('/api/faces/compare', methods=['POST'])
-def compare_faces_endpoint():
-    """Endpoint for face comparison"""
-    try:
-        data = request.get_json()
-        
-        if not data or 'faceData1' not in data or 'faceData2' not in data:
-            return jsonify({'error': 'Missing face data'}), 400
-
-        result = compare_faces_aws(data['faceData1'], data['faceData2'])
-        return jsonify(result), 200
-
-    except ClientError as e:
-        return jsonify({'error': str(e)}), 400
-    except Exception as e:
-        logger.error(f"Error in compare_faces_endpoint: {str(e)}")
-        return jsonify({'error': str(e)}), 500
-    
-    @app.route('/health', methods=['GET'])
-    def health_check():
-        """Health Check Endpoint"""
+# Health check endpoint
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Health Check Endpoint"""
     try:
         db.command('ping')
         return jsonify({
@@ -184,6 +144,7 @@ def compare_faces_endpoint():
             "database": "disconnected"
         }), 500
 
+# Authentication endpoints
 @app.route('/api/auth/register', methods=['POST'])
 def register_admin():
     """Register new admin user"""
@@ -205,7 +166,6 @@ def register_admin():
         }
         
         admins_collection.insert_one(new_admin)
-        
         return jsonify({'message': 'Admin registered successfully'}), 201
         
     except Exception as e:
@@ -237,35 +197,26 @@ def login():
         logger.error(f"Error in login: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-# Update the Swagger configuration
-swagger_config = {
-    "headers": [],
-    "specs": [{
-        "endpoint": 'apispec_1',
-        "route": '/apispec_1.json',
-        "rule_filter": lambda rule: True,
-        "model_filter": lambda tag: True,
-    }],
-    "static_url_path": "/flasgger_static",
-    "swagger_ui": True,
-    "specs_route": "/docs"
-}
+# Face recognition endpoints
+@app.route('/api/faces/compare', methods=['POST'])
+def compare_faces_endpoint():
+    """Endpoint for face comparison"""
+    try:
+        data = request.get_json()
+        
+        if not data or 'faceData1' not in data or 'faceData2' not in data:
+            return jsonify({'error': 'Missing face data'}), 400
 
-# Initialize Swagger with the supported parameters
-swagger = Swagger(
-    app,
-    template=swagger_template,
-    config=swagger_config
-)
+        result = compare_faces_aws(data['faceData1'], data['faceData2'])
+        return jsonify(result), 200
 
-# CORS configuration
-@app.after_request
-def after_request(response):
-    """Configure CORS headers"""
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-    return response
+    except ClientError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        logger.error(f"Error in compare_faces_endpoint: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
+# User management endpoints
 @app.route('/api/users', methods=['POST'])
 def register_user():
     """Register new user with face data"""
@@ -278,7 +229,6 @@ def register_user():
         if users_collection.find_one({'userId': data['userId']}):
             return jsonify({'error': 'User already exists'}), 409
 
-        # Verify face is detectable before storing
         try:
             face_bytes = base64.b64decode(data['faceData'].split(',')[1])
             rekognition_client.detect_faces(Image={'Bytes': face_bytes})
@@ -343,6 +293,54 @@ def delete_user(user_id):
     except Exception as e:
         logger.error(f"Error in delete_user: {str(e)}")
         return jsonify({'error': str(e)}), 500
+
+# Swagger configuration
+swagger_template = {
+    "swagger": "2.0",
+    "info": {
+        "title": "Face Recognition API",
+        "description": "API for face recognition services using AWS Rekognition",
+        "version": "1.0.0"
+    },
+    "consumes": ["application/json"],
+    "produces": ["application/json"],
+    "securityDefinitions": {
+        "Bearer": {
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header",
+            "description": "JWT Authorization header using Bearer scheme"
+        }
+    }
+}
+
+swagger_config = {
+    "headers": [],
+    "specs": [{
+        "endpoint": 'apispec_1',
+        "route": '/apispec_1.json',
+        "rule_filter": lambda rule: True,
+        "model_filter": lambda tag: True,
+    }],
+    "static_url_path": "/flasgger_static",
+    "swagger_ui": True,
+    "specs_route": "/docs"
+}
+
+# Initialize Swagger
+swagger = Swagger(
+    app,
+    template=swagger_template,
+    config=swagger_config
+)
+
+# CORS configuration
+@app.after_request
+def after_request(response):
+    """Configure CORS headers"""
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    return response
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
