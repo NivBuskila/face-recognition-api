@@ -4,7 +4,6 @@ pymongo
 python-dotenv
 flasgger
 gunicorn
-numpy
-Pillow
+boto3
+botocore
 PyJWT
-opencv-python-headless
