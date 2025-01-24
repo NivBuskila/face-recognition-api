@@ -237,21 +237,28 @@ def login():
         logger.error(f"Error in login: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-# Additional Swagger configurations
+# Update the Swagger configuration
 swagger_config = {
     "headers": [],
     "specs": [{
-        "endpoint": 'apispec',
-        "route": '/apispec.json',
+        "endpoint": 'apispec_1',  # Changed from 'apispec' to make it unique
+        "route": '/apispec_1.json',
         "rule_filter": lambda rule: True,
         "model_filter": lambda tag: True,
     }],
     "static_url_path": "/flasgger_static",
     "swagger_ui": True,
-    "specs_route": "/docs"
+    "specs_route": "/docs",
+    "url_prefix": "/api/docs"  # Added URL prefix to avoid conflicts
 }
 
-swagger = Swagger(app, template=swagger_template, config=swagger_config)
+# Initialize Swagger with a unique name
+swagger = Swagger(
+    app,
+    template=swagger_template,
+    config=swagger_config,
+    blueprint_name='swagger_ui'  # Added unique blueprint name
+)
 
 # CORS configuration
 @app.after_request
