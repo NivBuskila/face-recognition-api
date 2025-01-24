@@ -168,8 +168,8 @@ def compare_faces_endpoint():
         return jsonify({'error': str(e)}), 500
     
     @app.route('/health', methods=['GET'])
-def health_check():
-    """Health Check Endpoint"""
+    def health_check():
+        """Health Check Endpoint"""
     try:
         db.command('ping')
         return jsonify({
