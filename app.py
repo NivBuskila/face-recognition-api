@@ -27,7 +27,8 @@ CORS(app, resources={
     r"/api/*": {
         "origins": "*",
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization"]
+        "allow_headers": ["Content-Type", "Authorization"],
+        "expose_headers": ["Authorization"]
     }
 })
 
@@ -189,7 +190,7 @@ def get_users():
         logger.error(f"Error in get_users: {str(e)}")
         return jsonify({'error': str(e)}), 500
     
-    
+
 # Health check endpoint
 @app.route('/health', methods=['GET'])
 @swag_from({
