@@ -147,6 +147,45 @@ def health_check():
 
 # Authentication endpoints
 @app.route('/api/auth/register', methods=['POST'])
+@swag_from({
+    'tags': ['Auth'],
+    'summary': 'Register new admin',
+    'description': 'Register a new admin user',
+    'parameters': [
+        {
+            'name': 'body',
+            'in': 'body',
+            'required': True,
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'username': {
+                        'type': 'string',
+                        'description': 'Admin username'
+                    },
+                    'password': {
+                        'type': 'string',
+                        'description': 'Admin password'
+                    }
+                }
+            }
+        }
+    ],
+    'responses': {
+        201: {
+            'description': 'Admin registered successfully'
+        },
+        400: {
+            'description': 'Invalid input'
+        },
+        409: {
+            'description': 'Admin already exists'
+        },
+        500: {
+            'description': 'Server error'
+        }
+    }
+})
 def register_admin():
     """Register new admin user"""
     try:
@@ -174,6 +213,51 @@ def register_admin():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/auth/login', methods=['POST'])
+@swag_from({
+    'tags': ['Auth'],
+    'summary': 'Admin login',
+    'description': 'Login for admin users',
+    'parameters': [
+        {
+            'name': 'body',
+            'in': 'body',
+            'required': True,
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'username': {
+                        'type': 'string',
+                        'description': 'Admin username'
+                    },
+                    'password': {
+                        'type': 'string',
+                        'description': 'Admin password'
+                    }
+                }
+            }
+        }
+    ],
+    'responses': {
+        200: {
+            'description': 'Login successful',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'token': {
+                        'type': 'string',
+                        'description': 'JWT token'
+                    }
+                }
+            }
+        },
+        401: {
+            'description': 'Invalid credentials'
+        },
+        500: {
+            'description': 'Server error'
+        }
+    }
+})
 def login():
     """Admin login endpoint"""
     try:
@@ -200,6 +284,55 @@ def login():
 
 # Face recognition endpoints
 @app.route('/api/faces/compare', methods=['POST'])
+@swag_from({
+    'tags': ['Face Recognition'],
+    'summary': 'Compare two face images',
+    'description': 'Compare two face images and return similarity score',
+    'parameters': [
+        {
+            'name': 'body',
+            'in': 'body',
+            'required': True,
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'faceData1': {
+                        'type': 'string',
+                        'description': 'Base64 encoded image of first face'
+                    },
+                    'faceData2': {
+                        'type': 'string',
+                        'description': 'Base64 encoded image of second face'
+                    }
+                }
+            }
+        }
+    ],
+    'responses': {
+        200: {
+            'description': 'Face comparison successful',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'verified': {
+                        'type': 'boolean',
+                        'description': 'Whether the faces match'
+                    },
+                    'confidence': {
+                        'type': 'number',
+                        'description': 'Confidence score of the match'
+                    }
+                }
+            }
+        },
+        400: {
+            'description': 'Invalid input'
+        },
+        500: {
+            'description': 'Server error'
+        }
+    }
+})
 def compare_faces_endpoint():
     """Endpoint for face comparison"""
     try:
@@ -219,6 +352,53 @@ def compare_faces_endpoint():
 
 # User management endpoints
 @app.route('/api/users', methods=['POST'])
+@swag_from({
+    'tags': ['Users'],
+    'summary': 'Register new user',
+    'description': 'Register a new user with face data',
+    'parameters': [
+        {
+            'name': 'body',
+            'in': 'body',
+            'required': True,
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'userId': {
+                        'type': 'string',
+                        'description': 'Unique identifier for the user'
+                    },
+                    'faceData': {
+                        'type': 'string',
+                        'description': 'Base64 encoded image of user face'
+                    }
+                }
+            }
+        }
+    ],
+    'responses': {
+        201: {
+            'description': 'User registered successfully',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'message': {'type': 'string'},
+                    'userId': {'type': 'string'},
+                    '_id': {'type': 'string'}
+                }
+            }
+        },
+        400: {
+            'description': 'Invalid input'
+        },
+        409: {
+            'description': 'User already exists'
+        },
+        500: {
+            'description': 'Server error'
+        }
+    }
+})
 def register_user():
     """Register new user with face data"""
     try:
@@ -255,6 +435,56 @@ def register_user():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/users/<user_id>/verify', methods=['POST'])
+@swag_from({
+    'tags': ['Users'],
+    'summary': 'Verify user identity',
+    'description': 'Verify user identity using face comparison',
+    'parameters': [
+        {
+            'name': 'user_id',
+            'in': 'path',
+            'type': 'string',
+            'required': True,
+            'description': 'ID of the user to verify'
+        },
+        {
+            'name': 'body',
+            'in': 'body',
+            'required': True,
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'faceData': {
+                        'type': 'string',
+                        'description': 'Base64 encoded image of face to verify'
+                    }
+                }
+            }
+        }
+    ],
+    'responses': {
+        200: {
+            'description': 'Verification successful',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'verified': {'type': 'boolean'},
+                    'confidence': {'type': 'number'},
+                    'userId': {'type': 'string'}
+                }
+            }
+        },
+        400: {
+            'description': 'Invalid input'
+        },
+        404: {
+            'description': 'User not found'
+        },
+        500: {
+            'description': 'Server error'
+        }
+    }
+})
 def verify_user(user_id):
     """Verify user identity using face comparison"""
     try:
