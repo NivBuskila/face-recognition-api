@@ -12,6 +12,7 @@ import jwt
 from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
 from botocore.exceptions import ClientError
+from flasgger import swag_from
 
 # Initialize Flask and load environment variables
 load_dotenv()
@@ -302,6 +303,20 @@ swagger_template = {
         "description": "API for face recognition services using AWS Rekognition",
         "version": "1.0.0"
     },
+    "tags": [
+        {
+            "name": "Face Recognition",
+            "description": "Face comparison and verification endpoints"
+        },
+        {
+            "name": "Users",
+            "description": "User management endpoints"
+        },
+        {
+            "name": "Auth",
+            "description": "Authentication endpoints"
+        }
+    ],
     "consumes": ["application/json"],
     "produces": ["application/json"],
     "securityDefinitions": {
