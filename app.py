@@ -191,6 +191,158 @@ def get_users():
         return jsonify({'error': str(e)}), 500
     
 
+@app.route('/api/users/<user_id>', methods=['GET'])
+@token_required
+@swag_from({
+    'tags': ['Users'],
+    'summary': 'Get user by ID',
+    'description': 'Get user details by user ID',
+    'parameters': [
+        {
+            'name': 'user_id',
+            'in': 'path',
+            'type': 'string',
+            'required': True,
+            'description': 'ID of the user to retrieve'
+        },
+        {
+            'name': 'Authorization',
+            'in': 'header',
+            'type': 'string',
+            'required': True,
+            'description': 'Bearer token for authentication'
+        }
+    ],
+    'responses': {
+        200: {
+            'description': 'User details retrieved successfully',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'userId': {'type': 'string'},
+                    'created_at': {'type': 'string', 'format': 'date-time'}
+                }
+            }
+        },
+        401: {
+            'description': 'Unauthorized - Invalid or missing token'
+        },
+        404: {
+            'description': 'User not found'
+        }
+    }
+})
+def get_user(user_id):
+    """Get user details by ID"""
+    try:
+        user = users_collection.find_one({'userId': user_id}, {'_id': 0, 'faceData': 0})
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+            
+        return jsonify(user), 200
+        
+    except Exception as e:
+        logger.error(f"Error in get_user: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/users/<user_id>', methods=['PUT'])
+@token_required
+@swag_from({
+    'tags': ['Users'],
+    'summary': 'Update user',
+    'description': 'Update user face data',
+    'parameters': [
+        {
+            'name': 'user_id',
+            'in': 'path',
+            'type': 'string',
+            'required': True,
+            'description': 'ID of the user to update'
+        },
+        {
+            'name': 'body',
+            'in': 'body',
+            'required': True,
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'faceData': {
+                        'type': 'string',
+                        'description': 'New base64 encoded image of user face'
+                    }
+                }
+            }
+        },
+        {
+            'name': 'Authorization',
+            'in': 'header',
+            'type': 'string',
+            'required': True,
+            'description': 'Bearer token for authentication'
+        }
+    ],
+    'responses': {
+        200: {
+            'description': 'User updated successfully',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'message': {'type': 'string'},
+                    'userId': {'type': 'string'}
+                }
+            }
+        },
+        400: {
+            'description': 'Invalid input'
+        },
+        401: {
+            'description': 'Unauthorized - Invalid or missing token'
+        },
+        404: {
+            'description': 'User not found'
+        }
+    }
+})
+def update_user(user_id):
+    """Update user face data"""
+    try:
+        data = request.get_json()
+        
+        if not data or 'faceData' not in data:
+            return jsonify({'error': 'Missing face data'}), 400
+            
+        user = users_collection.find_one({'userId': user_id})
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+
+        # Validate new face data with AWS Rekognition
+        try:
+            face_bytes = base64.b64decode(data['faceData'].split(',')[1])
+            rekognition_client.detect_faces(Image={'Bytes': face_bytes})
+        except:
+            return jsonify({'error': 'No valid face detected in image'}), 400
+            
+        # Update user
+        result = users_collection.update_one(
+            {'userId': user_id},
+            {'$set': {
+                'faceData': data['faceData'],
+                'updated_at': datetime.utcnow()
+            }}
+        )
+        
+        if result.modified_count == 0:
+            return jsonify({'error': 'Update failed'}), 500
+            
+        return jsonify({
+            'message': 'User updated successfully',
+            'userId': user_id
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error in update_user: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+    
 # Health check endpoint
 @app.route('/health', methods=['GET'])
 @swag_from({
