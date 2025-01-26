@@ -92,7 +92,20 @@ def token_required(f):
     return decorated
 
 def compare_faces_aws(source_image: str, target_image: str) -> dict:
-    """Compare two face images using AWS Rekognition"""
+    """
+    Compare two face images using AWS Rekognition service.
+    
+    Args:
+        source_image (str): Base64 encoded image of the source face
+        target_image (str): Base64 encoded image of the target face
+        
+    Returns:
+        dict: Contains 'verified' (bool) and 'confidence' (float) fields
+        
+    Raises:
+        ClientError: When AWS Rekognition service fails
+        Exception: For general errors in image processing
+    """
     try:
         # Remove base64 prefix if present
         if ',' in source_image:
@@ -127,8 +140,87 @@ def compare_faces_aws(source_image: str, target_image: str) -> dict:
         logger.error(f"Error in compare_faces: {str(e)}")
         raise
 
+
+@app.route('/api/users', methods=['GET'])
+@token_required
+@swag_from({
+    'tags': ['Users'],
+    'summary': 'Get all users',
+    'description': 'Get a list of all registered users',
+    'parameters': [
+        {
+            'name': 'Authorization',
+            'in': 'header',
+            'type': 'string',
+            'required': True,
+            'description': 'Bearer token for authentication'
+        }
+    ],
+    'responses': {
+        200: {
+            'description': 'List of users retrieved successfully',
+            'schema': {
+                'type': 'array',
+                'items': {
+                    'type': 'object',
+                    'properties': {
+                        'userId': {'type': 'string'},
+                        'created_at': {'type': 'string', 'format': 'date-time'}
+                    }
+                }
+            }
+        },
+        401: {
+            'description': 'Unauthorized - Invalid or missing token'
+        }
+    },
+    'security': [
+        {
+            'Bearer': []
+        }
+    ]
+})
+def get_users():
+    """Get all registered users"""
+    try:
+        users = list(users_collection.find({}, {'_id': 0, 'faceData': 0}))
+        return jsonify(users), 200
+    except Exception as e:
+        logger.error(f"Error in get_users: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+    
+    
 # Health check endpoint
 @app.route('/health', methods=['GET'])
+@swag_from({
+    'tags': ['System'],
+    'summary': 'Health check',
+    'description': 'Check if the service and database are running properly',
+    'responses': {
+        200: {
+            'description': 'Service is healthy',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'status': {'type': 'string'},
+                    'message': {'type': 'string'},
+                    'database': {'type': 'string'}
+                }
+            }
+        },
+        500: {
+            'description': 'Service is unhealthy',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'status': {'type': 'string'},
+                    'message': {'type': 'string'},
+                    'database': {'type': 'string'}
+                }
+            }
+        }
+    }
+})
 def health_check():
     """Health Check Endpoint"""
     try:
@@ -508,6 +600,53 @@ def verify_user(user_id):
 
 @app.route('/api/users/<user_id>', methods=['DELETE'])
 @token_required
+@swag_from({
+    'tags': ['Users'],
+    'summary': 'Delete user',
+    'description': 'Delete a user from the system',
+    'parameters': [
+        {
+            'name': 'user_id',
+            'in': 'path',
+            'type': 'string',
+            'required': True,
+            'description': 'ID of the user to delete'
+        },
+        {
+            'name': 'Authorization',
+            'in': 'header',
+            'type': 'string',
+            'required': True,
+            'description': 'Bearer token for authentication'
+        }
+    ],
+    'responses': {
+        200: {
+            'description': 'User deleted successfully',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'message': {'type': 'string'},
+                    'userId': {'type': 'string'}
+                }
+            }
+        },
+        401: {
+            'description': 'Unauthorized - Invalid or missing token'
+        },
+        404: {
+            'description': 'User not found'
+        },
+        500: {
+            'description': 'Server error'
+        }
+    },
+    'security': [
+        {
+            'Bearer': []
+        }
+    ]
+})
 def delete_user(user_id):
     """Delete user record"""
     try:
@@ -535,16 +674,20 @@ swagger_template = {
     },
     "tags": [
         {
-            "name": "Face Recognition",
-            "description": "Face comparison and verification endpoints"
+        "name": "System",
+        "description": "System health and monitoring endpoints"
         },
         {
-            "name": "Users",
-            "description": "User management endpoints"
+        "name": "Face Recognition",
+        "description": "Face comparison and verification endpoints"
         },
         {
-            "name": "Auth",
-            "description": "Authentication endpoints"
+        "name": "Users",
+        "description": "User management endpoints"
+        },
+        {
+        "name": "Auth",
+        "description": "Authentication endpoints"
         }
     ],
     "consumes": ["application/json"],
