@@ -117,29 +117,49 @@ def compare_faces_aws(source_image: str, target_image: str) -> dict:
         if ',' in target_image:
             target_image = target_image.split(',')[1]
 
-        # Convert base64 to bytes
+        # Convert base64 string to bytes
         source_bytes = base64.b64decode(source_image)
         target_bytes = base64.b64decode(target_image)
 
-        # Compare faces using AWS Rekognition
-        response = rekognition_client.compare_faces(
-            SourceImage={'Bytes': source_bytes},
-            TargetImage={'Bytes': target_bytes},
-            SimilarityThreshold=80
-        )
+        # Ensure the images are valid
+        try:
+            # Check if there is a face in the source image
+            source_face = rekognition_client.detect_faces(
+                Image={'Bytes': source_bytes},
+                Attributes=['DEFAULT']
+            )
+            if not source_face['FaceDetails']:
+                return {"verified": False, "confidence": 0.0, "error": "No face detected in source image"}
 
-        if not response['FaceMatches']:
-            return {"verified": False, "confidence": 0.0}
+            # Check if there is a face in the target image
+            target_face = rekognition_client.detect_faces(
+                Image={'Bytes': target_bytes},
+                Attributes=['DEFAULT']
+            )
+            if not target_face['FaceDetails']:
+                return {"verified": False, "confidence": 0.0, "error": "No face detected in target image"}
 
-        match = response['FaceMatches'][0]
-        return {
-            "verified": True,
-            "confidence": float(match['Similarity']) / 100
-        }
+            # Compare faces between source and target images
+            response = rekognition_client.compare_faces(
+                SourceImage={'Bytes': source_bytes},
+                TargetImage={'Bytes': target_bytes},
+                SimilarityThreshold=80.0  # Set the minimum similarity threshold
+            )
 
-    except ClientError as e:
-        logger.error(f"AWS Rekognition error: {str(e)}")
-        raise
+            if not response['FaceMatches']:
+                return {"verified": False, "confidence": 0.0, "error": "Faces don't match"}
+
+            match = response['FaceMatches'][0]
+            return {
+                "verified": True,
+                "confidence": float(match['Similarity']) / 100,
+                "error": None
+            }
+
+        except rekognition_client.exceptions.InvalidParameterException as e:
+            logger.error(f"Invalid parameter: {str(e)}")
+            return {"verified": False, "confidence": 0.0, "error": "Invalid image format"}
+
     except Exception as e:
         logger.error(f"Error in compare_faces: {str(e)}")
         raise
