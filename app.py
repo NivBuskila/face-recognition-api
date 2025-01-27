@@ -278,13 +278,16 @@ def get_user_image(user_id):
         if not user or 'faceData' not in user:
             return jsonify({'error': 'User or image not found'}), 404
             
-        return jsonify({'faceData': user['faceData']}), 200
+        return jsonify({
+            'userId': user_id,
+            'faceData': user['faceData']
+        }), 200
         
     except Exception as e:
         logger.error(f"Error in get_user_image: {str(e)}")
         return jsonify({'error': str(e)}), 500
     
-    
+
 @app.route('/api/users/<user_id>', methods=['PUT'])
 @token_required
 @swag_from({
