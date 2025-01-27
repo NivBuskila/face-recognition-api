@@ -272,15 +272,19 @@ def get_user(user_id):
 @app.route('/api/users/<user_id>/image', methods=['GET'])
 @token_required
 def get_user_image(user_id):
-    """Get user's face image"""
     try:
         user = users_collection.find_one({'userId': user_id})
         if not user or 'faceData' not in user:
             return jsonify({'error': 'User or image not found'}), 404
             
+        # Add prefix if not exists
+        face_data = user['faceData']
+        if not face_data.startswith('data:image'):
+            face_data = 'data:image/jpeg;base64,' + face_data
+            
         return jsonify({
             'userId': user_id,
-            'faceData': user['faceData']
+            'faceData': face_data
         }), 200
         
     except Exception as e:
